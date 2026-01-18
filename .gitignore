@@ -14,3 +14,7 @@ composer.lock
 .idea/
 .vscode/
 .DS_Store
+
+/temp_migrations
+/tests/temp_project
+.pstat.json
