@@ -166,20 +166,29 @@ class MigrationManager
     {
         $driver = $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
 
-        if ($driver === 'sqlite') {
+        if ($driver === 'mysql') {
+            $this->pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
+            $tables = $this->pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+        } elseif ($driver === 'sqlite') {
+            $this->pdo->exec("PRAGMA foreign_keys = OFF");
             $tables = $this->pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")->fetchAll(PDO::FETCH_COLUMN);
         } else {
-            $tables = $this->pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+            $tables = $this->pdo->query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")->fetchAll(PDO::FETCH_COLUMN);
         }
 
         if (empty($tables)) return;
 
-        $this->pdo->exec("SET FOREIGN_KEY_CHECKS = 0"); // Apenas MySQL, ignorado por outros
         foreach ($tables as $table) {
-            $this->pdo->exec("DROP TABLE `{$table}`");
+            $quote = ($driver === 'mysql') ? "`" : '"';
+            $this->pdo->exec("DROP TABLE {$quote}{$table}{$quote}");
             echo "🗑️  Dropped: {$table}\n";
         }
-        $this->pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
+
+        if ($driver === 'mysql') {
+            $this->pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
+        } elseif ($driver === 'sqlite') {
+            $this->pdo->exec("PRAGMA foreign_keys = ON");
+        }
     }
 
     private function getNextBatch(): int
