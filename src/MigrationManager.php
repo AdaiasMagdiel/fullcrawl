@@ -4,6 +4,7 @@ namespace AdaiasMagdiel\FullCrawl;
 
 use PDO;
 use Throwable;
+use RuntimeException;
 
 class MigrationManager
 {
@@ -23,7 +24,7 @@ class MigrationManager
 
     private function ensureHistoryTable(): void
     {
-        $driver = $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        $driver = (string) $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
         $sql = DatabaseQueries::getCreateTableSql($driver, $this->table);
         $this->pdo->exec($sql);
     }
@@ -31,13 +32,11 @@ class MigrationManager
     public function create(string $name): string
     {
         $timestamp = date('Ymd_His');
-
-        $name = iconv('UTF-8', 'ASCII//TRANSLIT', $name);
-
-        $name = preg_replace('/[^a-zA-Z0-9\s]/', '', $name);
+        $name = (string) iconv('UTF-8', 'ASCII//TRANSLIT', $name);
+        $name = (string) preg_replace('/[^a-zA-Z0-9\s]/', '', $name);
 
         $slug = strtolower(trim($name));
-        $slug = preg_replace('/\s+/', '_', $slug);
+        $slug = (string) preg_replace('/\s+/', '_', $slug);
 
         $filename = "{$timestamp}_{$slug}.php";
         $path = $this->migrationsDir . DIRECTORY_SEPARATOR . $filename;
@@ -50,8 +49,14 @@ class MigrationManager
 
     public function run(): void
     {
-        $executed = $this->pdo->query("SELECT migration FROM {$this->table}")->fetchAll(PDO::FETCH_COLUMN);
+        $stmt = $this->pdo->query("SELECT migration FROM {$this->table}");
+        if (!$stmt) throw new RuntimeException("Failed to fetch migration history.");
+
+        /** @var array<string> $executed */
+        $executed = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
         $files = glob($this->migrationsDir . '/*.php');
+        if ($files === false) $files = [];
         sort($files);
 
         $batch = $this->getNextBatch();
@@ -61,20 +66,21 @@ class MigrationManager
             $name = basename($file);
             if (in_array($name, $executed)) continue;
 
+            /** @var array{up: callable, down: callable} $migration */
             $migration = require $file;
 
             $this->pdo->beginTransaction();
             try {
                 $migration['up']($this->pdo);
 
-                $stmt = $this->pdo->prepare("INSERT INTO {$this->table} (migration, batch) VALUES (?, ?)");
-                $stmt->execute([$name, $batch]);
+                $stmtInsert = $this->pdo->prepare("INSERT INTO {$this->table} (migration, batch) VALUES (?, ?)");
+                $stmtInsert->execute([$name, $batch]);
 
                 $this->pdo->commit();
                 echo "✔ Applied: $name\n";
                 $count++;
             } catch (Throwable $e) {
-                $this->pdo->rollBack();
+                if ($this->pdo->inTransaction()) $this->pdo->rollBack();
                 $this->printError("Error in $name", $e->getMessage());
                 return;
             }
@@ -85,39 +91,53 @@ class MigrationManager
 
     public function rollback(): void
     {
-        $batch = $this->pdo->query("SELECT MAX(batch) FROM {$this->table}")->fetchColumn();
+        $batchStmt = $this->pdo->query("SELECT MAX(batch) FROM {$this->table}");
+        /** @var int|false|null $batch */
+        $batch = $batchStmt ? $batchStmt->fetchColumn() : null;
+
+        if ($batchStmt) {
+            $batchStmt->closeCursor();
+        }
+
         if (!$batch) {
             echo "Nothing to rollback.\n";
             return;
         }
 
         $stmt = $this->pdo->prepare("SELECT migration FROM {$this->table} WHERE batch = ? ORDER BY id DESC");
-        $stmt->execute([$batch]);
+        $stmt->execute([(int) $batch]);
+        /** @var array<string> $migrations */
         $migrations = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        $stmt->closeCursor(); // Libera o lock de leitura imediatamente
+
+        if (empty($migrations)) {
+            return;
+        }
 
         echo "⏮ Rolling back batch $batch...\n";
 
         foreach ($migrations as $name) {
-            $path = $this->migrationsDir . DIRECTORY_SEPARATOR . $name;
-            if (!file_exists($path)) {
-                echo "⚠️ Warning: File $name not found. Skipping.\n";
-                continue;
-            }
-
-            $migration = require $path;
+            $migrationName = (string) $name;
+            $path = $this->migrationsDir . DIRECTORY_SEPARATOR . $migrationName;
 
             $this->pdo->beginTransaction();
             try {
-                $migration['down']($this->pdo);
+                if (file_exists($path)) {
+                    /** @var array{up: callable, down: callable} $migration */
+                    $migration = require $path;
+                    $migration['down']($this->pdo);
+                }
 
                 $stmtDel = $this->pdo->prepare("DELETE FROM {$this->table} WHERE migration = ?");
-                $stmtDel->execute([$name]);
+                $stmtDel->execute([$migrationName]);
 
                 $this->pdo->commit();
-                echo "↩ Reverted: $name\n";
+                echo "↩ Reverted: $migrationName\n";
             } catch (Throwable $e) {
-                $this->pdo->rollBack();
-                $this->printError("Error reverting $name", $e->getMessage());
+                if ($this->pdo->inTransaction()) {
+                    $this->pdo->rollBack();
+                }
+                $this->printError("Error reverting $migrationName", $e->getMessage());
                 return;
             }
         }
@@ -125,15 +145,17 @@ class MigrationManager
 
     public function status(): void
     {
-        $executed = $this->pdo->query("SELECT migration, batch, executed_at FROM {$this->table} ORDER BY id ASC")
-            ->fetchAll(PDO::FETCH_ASSOC);
+        $stmt = $this->pdo->query("SELECT migration, batch, executed_at FROM {$this->table} ORDER BY id ASC");
+        if (!$stmt) throw new RuntimeException("Failed to fetch status.");
 
-        $executedNames = array_column($executed, 'migration');
+        /** @var array<array{migration: string, batch: int, executed_at: string}> $executed */
+        $executed = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
         $files = glob($this->migrationsDir . '/*.php');
+        if ($files === false) $files = [];
         sort($files);
 
-        echo "\nFullCrawl Migration Status\n";
-        echo str_repeat('=', 50) . "\n";
+        echo "\nFullCrawl Migration Status\n" . str_repeat('=', 50) . "\n";
         echo sprintf("%-40s | %-10s\n", "Migration Name", "Status");
         echo str_repeat('-', 50) . "\n";
 
@@ -151,37 +173,31 @@ class MigrationManager
             $status = $info ? "Applied (Batch {$info['batch']})" : "Pending";
             echo sprintf("%-40s | %-10s\n", $name, $status);
         }
-        echo str_repeat('=', 50) . "\n";
-    }
-
-    public function fresh(): void
-    {
-        echo "⚠️  Dropping all tables and re-running all migrations...\n";
-        $this->wipe();
-        $this->ensureHistoryTable(); // Recria a tabela de controle
-        $this->run();
     }
 
     public function wipe(): void
     {
-        $driver = $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        $driver = (string) $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        $tables = [];
 
         if ($driver === 'mysql') {
             $this->pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
-            $tables = $this->pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+            $stmt = $this->pdo->query("SHOW TABLES");
+            $tables = $stmt ? $stmt->fetchAll(PDO::FETCH_COLUMN) : [];
         } elseif ($driver === 'sqlite') {
             $this->pdo->exec("PRAGMA foreign_keys = OFF");
-            $tables = $this->pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")->fetchAll(PDO::FETCH_COLUMN);
+            $stmt = $this->pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
+            $tables = $stmt ? $stmt->fetchAll(PDO::FETCH_COLUMN) : [];
         } else {
-            $tables = $this->pdo->query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")->fetchAll(PDO::FETCH_COLUMN);
+            $stmt = $this->pdo->query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'");
+            $tables = $stmt ? $stmt->fetchAll(PDO::FETCH_COLUMN) : [];
         }
 
-        if (empty($tables)) return;
-
         foreach ($tables as $table) {
+            $tableName = (string) $table;
             $quote = ($driver === 'mysql') ? "`" : '"';
-            $this->pdo->exec("DROP TABLE {$quote}{$table}{$quote}");
-            echo "🗑️  Dropped: {$table}\n";
+            $this->pdo->exec("DROP TABLE {$quote}{$tableName}{$quote}");
+            echo "🗑️ Dropped: {$tableName}\n";
         }
 
         if ($driver === 'mysql') {
@@ -193,15 +209,17 @@ class MigrationManager
 
     private function getNextBatch(): int
     {
-        return (int)$this->pdo->query("SELECT MAX(batch) FROM {$this->table}")->fetchColumn() + 1;
+        $stmt = $this->pdo->query("SELECT MAX(batch) FROM {$this->table}");
+        if (!$stmt) return 1;
+
+        $max = $stmt->fetchColumn();
+        $stmt->closeCursor();
+
+        return ((int) $max) + 1;
     }
 
     private function printError(string $title, string $message): void
     {
-        echo "\n" . str_repeat('-', 30) . "\n";
-        echo "❌ {$title}\n";
-        echo "Reason: {$message}\n";
-        echo "Transaction rolled back. Execution stopped.\n";
-        echo str_repeat('-', 30) . "\n";
+        echo "\n" . str_repeat('-', 30) . "\n❌ {$title}\nReason: {$message}\nTransaction rolled back.\n" . str_repeat('-', 30) . "\n";
     }
 }
