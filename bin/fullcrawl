@@ -33,7 +33,9 @@ $command = $argv[1] ?? null;
 
 switch ($command) {
     case '--new':
-        $name = $argv[2] ?? 'migration';
+        $args = array_slice($argv, 2);
+        $name = !empty($args) ? implode(' ', $args) : 'migration';
+
         echo "✅ Created: " . $manager->create($name) . "\n";
         break;
     case '--run':
@@ -57,7 +59,7 @@ switch ($command) {
         echo "Done.\n";
         break;
     default:
-        $this->showHelp();
+        showHelp();
 }
 
 function showHelp()

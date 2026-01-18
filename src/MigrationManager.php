@@ -31,13 +31,20 @@ class MigrationManager
     public function create(string $name): string
     {
         $timestamp = date('Ymd_His');
-        $slug = strtolower(preg_replace('/[^a-z0-9]+/', '_', trim($name)));
+
+        $name = iconv('UTF-8', 'ASCII//TRANSLIT', $name);
+
+        $name = preg_replace('/[^a-zA-Z0-9\s]/', '', $name);
+
+        $slug = strtolower(trim($name));
+        $slug = preg_replace('/\s+/', '_', $slug);
+
         $filename = "{$timestamp}_{$slug}.php";
-
         $path = $this->migrationsDir . DIRECTORY_SEPARATOR . $filename;
-        $content = Stubs::getMigrationTemplate($name);
 
+        $content = Stubs::getMigrationTemplate($name);
         file_put_contents($path, $content);
+
         return $filename;
     }
 
