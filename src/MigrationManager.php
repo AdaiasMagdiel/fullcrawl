@@ -52,35 +52,49 @@ class MigrationManager
         $stmt = $this->pdo->query("SELECT migration FROM {$this->table}");
         if (!$stmt) throw new RuntimeException("Failed to fetch migration history.");
 
-        /** @var array<string> $executed */
         $executed = $stmt->fetchAll(PDO::FETCH_COLUMN);
-
         $files = glob($this->migrationsDir . '/*.php');
         if ($files === false) $files = [];
         sort($files);
 
         $batch = $this->getNextBatch();
         $count = 0;
+        $driver = $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
 
         foreach ($files as $file) {
             $name = basename($file);
             if (in_array($name, $executed)) continue;
 
-            /** @var array{up: callable, down: callable} $migration */
             $migration = require $file;
 
-            $this->pdo->beginTransaction();
+            /**
+             * MySQL Edge Case: DDL (CREATE/DROP) causes an implicit commit.
+             * We only start transactions for drivers that support DDL Transactions (SQLite/Postgres).
+             */
+            $supportsTransactionalDDL = ($driver !== 'mysql');
+
             try {
+                if ($supportsTransactionalDDL) {
+                    $this->pdo->beginTransaction();
+                }
+
+                // 1. Execute the migration
                 $migration['up']($this->pdo);
 
+                // 2. Record in history
                 $stmtInsert = $this->pdo->prepare("INSERT INTO {$this->table} (migration, batch) VALUES (?, ?)");
                 $stmtInsert->execute([$name, $batch]);
 
-                $this->pdo->commit();
+                if ($supportsTransactionalDDL && $this->pdo->inTransaction()) {
+                    $this->pdo->commit();
+                }
+
                 echo "✔ Applied: $name\n";
                 $count++;
             } catch (Throwable $e) {
-                if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+                if ($supportsTransactionalDDL && $this->pdo->inTransaction()) {
+                    $this->pdo->rollBack();
+                }
                 $this->printError("Error in $name", $e->getMessage());
                 return;
             }
@@ -116,28 +130,34 @@ class MigrationManager
 
         echo "⏮ Rolling back batch $batch...\n";
 
-        foreach ($migrations as $name) {
-            $migrationName = (string) $name;
-            $path = $this->migrationsDir . DIRECTORY_SEPARATOR . $migrationName;
+        $driver = $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        $supportsTransactionalDDL = ($driver !== 'mysql');
 
-            $this->pdo->beginTransaction();
+        foreach ($migrations as $name) {
+            $path = $this->migrationsDir . DIRECTORY_SEPARATOR . $name;
+
+            if ($supportsTransactionalDDL) {
+                $this->pdo->beginTransaction();
+            }
+
             try {
                 if (file_exists($path)) {
-                    /** @var array{up: callable, down: callable} $migration */
                     $migration = require $path;
                     $migration['down']($this->pdo);
                 }
 
                 $stmtDel = $this->pdo->prepare("DELETE FROM {$this->table} WHERE migration = ?");
-                $stmtDel->execute([$migrationName]);
+                $stmtDel->execute([$name]);
 
-                $this->pdo->commit();
-                echo "↩ Reverted: $migrationName\n";
+                if ($supportsTransactionalDDL && $this->pdo->inTransaction()) {
+                    $this->pdo->commit();
+                }
+                echo "↩ Reverted: $name\n";
             } catch (Throwable $e) {
                 if ($this->pdo->inTransaction()) {
                     $this->pdo->rollBack();
                 }
-                $this->printError("Error reverting $migrationName", $e->getMessage());
+                $this->printError("Error reverting $name", $e->getMessage());
                 return;
             }
         }
