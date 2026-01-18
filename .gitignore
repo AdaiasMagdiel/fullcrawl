@@ -1,0 +1,16 @@
+/vendor/
+composer.lock
+
+/fullcrawl.php
+
+*.sqlite
+*.db
+
+/database/migrations/*.php
+
+*.log
+.phpunit.result.cache
+
+.idea/
+.vscode/
+.DS_Store

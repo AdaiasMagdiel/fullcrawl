@@ -1,0 +1,73 @@
+#!/usr/bin/env php
+<?php
+
+$cwd = getcwd();
+
+// Autoload logic
+$autoload = file_exists($cwd . '/vendor/autoload.php')
+    ? $cwd . '/vendor/autoload.php'
+    : __DIR__ . '/../vendor/autoload.php';
+
+if (file_exists($autoload)) require $autoload;
+
+// Look for fullcrawl.php in the user's root
+$configFile = $cwd . '/fullcrawl.php';
+
+if (!file_exists($configFile)) {
+    echo "❌ Error: 'fullcrawl.php' not found in project root.\n";
+    echo "This file must return a PDO instance.\n";
+    exit(1);
+}
+
+$pdo = require $configFile;
+
+if (!$pdo instanceof PDO) {
+    echo "❌ Error: 'fullcrawl.php' must return a PDO instance.\n";
+    exit(1);
+}
+
+$migrationsDir = $cwd . '/database/migrations';
+$manager = new \AdaiasMagdiel\FullCrawl\MigrationManager($pdo, $migrationsDir);
+
+$command = $argv[1] ?? null;
+
+switch ($command) {
+    case '--new':
+        $name = $argv[2] ?? 'migration';
+        echo "✅ Created: " . $manager->create($name) . "\n";
+        break;
+    case '--run':
+        $manager->run();
+        break;
+    case '--rollback':
+        $manager->rollback();
+        break;
+    case '--status':
+        $manager->status();
+        break;
+    case '--fresh':
+        echo "Are you sure? This will DELETE all data! (y/n): ";
+        if (strtolower(trim(fgets(STDIN))) === 'y') {
+            $manager->fresh();
+        }
+        break;
+    case '--wipe':
+        echo "Cleaning database... ";
+        $manager->wipe();
+        echo "Done.\n";
+        break;
+    default:
+        $this->showHelp();
+}
+
+function showHelp()
+{
+    echo "FullCrawl Migration System ⚡\n";
+    echo "Usage: fullcrawl [command] [options]\n\n";
+    echo "  --new [name]   Create a new migration file\n";
+    echo "  --run          Run all pending migrations\n";
+    echo "  --rollback     Revert the last batch of migrations\n";
+    echo "  --status       Show the status of all migrations\n";
+    echo "  --fresh        Drop all tables and re-run all migrations\n";
+    echo "  --wipe         Drop all tables without re-running\n";
+}

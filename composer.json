@@ -1,0 +1,26 @@
+{
+    "name": "adaiasmagdiel/fullcrawl",
+    "description": "A minimalist, framework-agnostic database migration system using dependency injection.",
+    "type": "library",
+    "license": "GPL-3.0-only",
+    "autoload": {
+        "psr-4": {
+            "AdaiasMagdiel\\FullCrawl\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Adaías Magdiel",
+            "email": "adaiasmagdiell@gmail.com"
+        }
+    ],
+    "bin": [
+        "bin/fullcrawl",
+        "bin/fullcrawl.bat"
+    ],
+    "minimum-stability": "stable",
+    "require": {
+        "php": ">=8.0",
+        "ext-pdo": "*"
+    }
+}
