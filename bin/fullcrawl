@@ -50,7 +50,8 @@ switch ($command) {
     case '--fresh':
         echo "Are you sure? This will DELETE all data! (y/n): ";
         if (strtolower(trim(fgets(STDIN))) === 'y') {
-            $manager->fresh();
+            $manager->wipe();
+            $manager->run();
         }
         break;
     case '--wipe':
