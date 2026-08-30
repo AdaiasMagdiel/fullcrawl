@@ -75,30 +75,7 @@ FullCrawl provides a powerful CLI to manage your database schema:
 
 ### Anatomy of a Migration
 
-When you run `fullcrawl --new`, a file is created in `database/migrations/`. You have full access to the `$pdo` object:
-
-```php
-<?php
-
-/**
- * FullCrawl Migration: create_users_table
- */
-return [
-    'up' => function(PDO $pdo) {
-        $pdo->exec("CREATE TABLE users (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            username VARCHAR(50) NOT NULL,
-            email VARCHAR(255) NOT NULL UNIQUE
-        ) ENGINE=InnoDB");
-    },
-    'down' => function(PDO $pdo) {
-        $pdo->exec("DROP TABLE users");
-    }
-];
-
-```
-
-Prefer idempotent statements, so a migration can be safely re-run after a failure:
+When you run `fullcrawl --new`, a file is created in `database/migrations/`. You have full access to the `$pdo` object. Prefer idempotent statements (`IF NOT EXISTS` / `IF EXISTS`), so a migration can be safely re-run after a failure:
 
 ```php
 <?php
