@@ -140,7 +140,7 @@ return [
 
 [`bin/fullcrawl`](bin/fullcrawl) is a plain PHP script installed by Composer as an executable — there's no compiled binary or hidden network call. Here's exactly what it does, in order, every time you run it:
 
-1. **Finds Composer's autoloader.** It checks `vendor/autoload.php` in your current directory first, falling back to the package's own `vendor/autoload.php` if you're running it from somewhere else. If neither exists, nothing loads and PHP will error on the next step.
+1. **Finds Composer's autoloader.** It checks `vendor/autoload.php` in your current directory first, falling back to the package's own `vendor/autoload.php` if you're running it from somewhere else. If neither exists, it exits with a clear error instead of failing later with an unrelated "Class not found".
 2. **Loads `fullcrawl.php` from your project root.** This is your own file — the script just does `require`. If it's missing, it exits with an error before touching anything else.
 3. **Validates the return value is a `PDO` instance.** If `fullcrawl.php` returns anything else, it exits immediately. This is the only "trust" boundary: the script never opens a database connection itself, it only ever uses the one *you* constructed and handed it.
 4. **Instantiates `MigrationManager`** with that `$pdo` and `<cwd>/database/migrations`, which on construction runs one `CREATE TABLE IF NOT EXISTS` for its own history table — no other schema changes happen yet.
