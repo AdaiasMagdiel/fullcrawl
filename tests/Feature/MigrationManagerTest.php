@@ -140,6 +140,27 @@ test('it wipes all tables from database', function () {
     expect($tables)->toBeEmpty();
 });
 
+test('it can run migrations again after a wipe (--fresh)', function () {
+    $filename = $this->manager->create('create_users_table');
+    $content = "<?php return [
+        'up' => fn(\$pdo) => \$pdo->exec('CREATE TABLE users (id INTEGER PRIMARY KEY)'),
+        'down' => fn(\$pdo) => \$pdo->exec('DROP TABLE users')
+    ];";
+    file_put_contents($this->migrationsDir . '/' . $filename, $content);
+
+    $this->manager->run();
+
+    // wipe() drops migrations_history itself; run() must self-heal it
+    $this->manager->wipe();
+    expect(fn() => $this->manager->run())->not->toThrow(Throwable::class);
+
+    $tableExists = $this->pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")->fetch();
+    expect($tableExists)->not->toBeFalse();
+
+    $history = $this->pdo->query("SELECT migration FROM migrations_history WHERE batch = 1")->fetchColumn();
+    expect($history)->toBe($filename);
+});
+
 test('it handles run command with no migration files', function () {
     // Ensuring the directory is empty
     array_map('unlink', glob("$this->migrationsDir/*.*"));

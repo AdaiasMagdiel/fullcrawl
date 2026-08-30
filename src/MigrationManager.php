@@ -49,6 +49,10 @@ class MigrationManager
 
     public function run(): void
     {
+        // wipe() may have dropped migrations_history; recreate it if needed
+        // so --fresh (wipe + run) keeps working.
+        $this->ensureHistoryTable();
+
         $stmt = $this->pdo->query("SELECT migration FROM {$this->table}");
         if (!$stmt) throw new RuntimeException("Failed to fetch migration history.");
 
@@ -59,7 +63,6 @@ class MigrationManager
 
         $batch = $this->getNextBatch();
         $count = 0;
-        $driver = $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
 
         foreach ($files as $file) {
             $name = basename($file);
@@ -68,15 +71,12 @@ class MigrationManager
             $migration = require $file;
 
             /**
-             * MySQL Edge Case: DDL (CREATE/DROP) causes an implicit commit.
-             * We only start transactions for drivers that support DDL Transactions (SQLite/Postgres).
+             * MySQL Edge Case: DDL (CREATE/DROP) causes an implicit commit, so
+             * inTransaction() may already be false by the time we reach commit/rollback.
+             * We still always start a transaction so pure-DML migrations stay atomic.
              */
-            $supportsTransactionalDDL = ($driver !== 'mysql');
-
             try {
-                if ($supportsTransactionalDDL) {
-                    $this->pdo->beginTransaction();
-                }
+                $this->pdo->beginTransaction();
 
                 // 1. Execute the migration
                 $migration['up']($this->pdo);
@@ -85,17 +85,19 @@ class MigrationManager
                 $stmtInsert = $this->pdo->prepare("INSERT INTO {$this->table} (migration, batch) VALUES (?, ?)");
                 $stmtInsert->execute([$name, $batch]);
 
-                if ($supportsTransactionalDDL && $this->pdo->inTransaction()) {
+                if ($this->pdo->inTransaction()) {
                     $this->pdo->commit();
                 }
 
                 echo "✔ Applied: $name\n";
                 $count++;
             } catch (Throwable $e) {
-                if ($supportsTransactionalDDL && $this->pdo->inTransaction()) {
+                $rolledBack = false;
+                if ($this->pdo->inTransaction()) {
                     $this->pdo->rollBack();
+                    $rolledBack = true;
                 }
-                $this->printError("Error in $name", $e->getMessage());
+                $this->printError("Error in $name", $e->getMessage(), $rolledBack);
                 return;
             }
         }
@@ -105,6 +107,8 @@ class MigrationManager
 
     public function rollback(): void
     {
+        $this->ensureHistoryTable();
+
         $batchStmt = $this->pdo->query("SELECT MAX(batch) FROM {$this->table}");
         /** @var int|false|null $batch */
         $batch = $batchStmt ? $batchStmt->fetchColumn() : null;
@@ -130,15 +134,10 @@ class MigrationManager
 
         echo "⏮ Rolling back batch $batch...\n";
 
-        $driver = $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
-        $supportsTransactionalDDL = ($driver !== 'mysql');
-
         foreach ($migrations as $name) {
             $path = $this->migrationsDir . DIRECTORY_SEPARATOR . $name;
 
-            if ($supportsTransactionalDDL) {
-                $this->pdo->beginTransaction();
-            }
+            $this->pdo->beginTransaction();
 
             try {
                 if (file_exists($path)) {
@@ -149,15 +148,17 @@ class MigrationManager
                 $stmtDel = $this->pdo->prepare("DELETE FROM {$this->table} WHERE migration = ?");
                 $stmtDel->execute([$name]);
 
-                if ($supportsTransactionalDDL && $this->pdo->inTransaction()) {
+                if ($this->pdo->inTransaction()) {
                     $this->pdo->commit();
                 }
                 echo "↩ Reverted: $name\n";
             } catch (Throwable $e) {
+                $rolledBack = false;
                 if ($this->pdo->inTransaction()) {
                     $this->pdo->rollBack();
+                    $rolledBack = true;
                 }
-                $this->printError("Error reverting $name", $e->getMessage());
+                $this->printError("Error reverting $name", $e->getMessage(), $rolledBack);
                 return;
             }
         }
@@ -165,6 +166,8 @@ class MigrationManager
 
     public function status(): void
     {
+        $this->ensureHistoryTable();
+
         $stmt = $this->pdo->query("SELECT migration, batch, executed_at FROM {$this->table} ORDER BY id ASC");
         if (!$stmt) throw new RuntimeException("Failed to fetch status.");
 
@@ -238,8 +241,9 @@ class MigrationManager
         return ((int) $max) + 1;
     }
 
-    private function printError(string $title, string $message): void
+    private function printError(string $title, string $message, bool $rolledBack = true): void
     {
-        echo "\n" . str_repeat('-', 30) . "\n❌ {$title}\nReason: {$message}\nTransaction rolled back.\n" . str_repeat('-', 30) . "\n";
+        $status = $rolledBack ? "Transaction rolled back.\n" : "No transaction was active; already-executed statements may have been committed (e.g. MySQL DDL). Manual cleanup may be required.\n";
+        echo "\n" . str_repeat('-', 30) . "\n❌ {$title}\nReason: {$message}\n{$status}" . str_repeat('-', 30) . "\n";
     }
 }
