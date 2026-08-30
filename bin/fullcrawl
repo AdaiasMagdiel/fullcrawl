@@ -39,10 +39,10 @@ switch ($command) {
         echo "✅ Created: " . $manager->create($name) . "\n";
         break;
     case '--run':
-        $manager->run();
+        if (!$manager->run()) exit(1);
         break;
     case '--rollback':
-        $manager->rollback();
+        if (!$manager->rollback()) exit(1);
         break;
     case '--status':
         $manager->status();
@@ -51,7 +51,7 @@ switch ($command) {
         echo "Are you sure? This will DELETE all data! (y/n): ";
         if (strtolower(trim(fgets(STDIN))) === 'y') {
             $manager->wipe();
-            $manager->run();
+            if (!$manager->run()) exit(1);
         }
         break;
     case '--wipe':

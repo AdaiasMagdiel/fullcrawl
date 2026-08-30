@@ -47,7 +47,7 @@ class MigrationManager
         return $filename;
     }
 
-    public function run(): void
+    public function run(): bool
     {
         // wipe() may have dropped migrations_history; recreate it if needed
         // so --fresh (wipe + run) keeps working.
@@ -98,14 +98,16 @@ class MigrationManager
                     $rolledBack = true;
                 }
                 $this->printError("Error in $name", $e->getMessage(), $rolledBack);
-                return;
+                return false;
             }
         }
 
         echo $count > 0 ? "\nSummary: $count migration(s) applied (Batch $batch).\n" : "No pending migrations.\n";
+
+        return true;
     }
 
-    public function rollback(): void
+    public function rollback(): bool
     {
         $this->ensureHistoryTable();
 
@@ -119,7 +121,7 @@ class MigrationManager
 
         if (!$batch) {
             echo "Nothing to rollback.\n";
-            return;
+            return true;
         }
 
         $stmt = $this->pdo->prepare("SELECT migration FROM {$this->table} WHERE batch = ? ORDER BY id DESC");
@@ -129,7 +131,7 @@ class MigrationManager
         $stmt->closeCursor(); // Libera o lock de leitura imediatamente
 
         if (empty($migrations)) {
-            return;
+            return true;
         }
 
         echo "⏮ Rolling back batch $batch...\n";
@@ -159,9 +161,11 @@ class MigrationManager
                     $rolledBack = true;
                 }
                 $this->printError("Error reverting $name", $e->getMessage(), $rolledBack);
-                return;
+                return false;
             }
         }
+
+        return true;
     }
 
     public function status(): void

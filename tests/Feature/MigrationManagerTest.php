@@ -68,7 +68,7 @@ test('it runs migrations and saves to history table', function () {
     ];";
     file_put_contents($this->migrationsDir . '/' . $filename, $content);
 
-    $this->manager->run();
+    expect($this->manager->run())->toBeTrue();
 
     // Check if table was actually created in the database
     $tableExists = $this->pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")->fetch();
@@ -96,7 +96,8 @@ test('it rolls back everything if a migration fails', function () {
     ];";
     file_put_contents($this->migrationsDir . '/' . $failFile, $content);
 
-    $this->manager->run();
+    // run() must report failure so the CLI can exit non-zero
+    expect($this->manager->run())->toBeFalse();
 
     // 'secret_data' table should NOT exist due to atomicity (rollback)
     $tableExists = $this->pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='secret_data'")->fetch();
@@ -121,10 +122,23 @@ test('it rolls back the last batch only', function () {
     $this->manager->run();
 
     // Perform Rollback (should only revert Batch 2)
-    $this->manager->rollback();
+    expect($this->manager->rollback())->toBeTrue();
 
     expect($this->pdo->query("SELECT name FROM sqlite_master WHERE name='t2'")->fetch())->toBeFalse();
     expect($this->pdo->query("SELECT name FROM sqlite_master WHERE name='t1'")->fetch())->not->toBeFalse();
+});
+
+test('it reports failure when a rollback fails', function () {
+    $file = $this->manager->create('failing_down');
+    $content = "<?php return [
+        'up' => fn(\$pdo) => \$pdo->exec('CREATE TABLE t1 (id INT)'),
+        'down' => function(\$pdo) { throw new Exception('Simulated Failure'); }
+    ];";
+    file_put_contents($this->migrationsDir . '/' . $file, $content);
+    $this->manager->run();
+
+    // rollback() must report failure so the CLI can exit non-zero
+    expect($this->manager->rollback())->toBeFalse();
 });
 
 ### --- CLEANUP TESTS (WIPE) --- ###
