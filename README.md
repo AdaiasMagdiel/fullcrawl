@@ -1,5 +1,10 @@
 # FullCrawl ⚡
 
+[![Tests](https://github.com/AdaiasMagdiel/fullcrawl/actions/workflows/tests.yml/badge.svg)](https://github.com/AdaiasMagdiel/fullcrawl/actions/workflows/tests.yml)
+[![Latest Version](https://img.shields.io/packagist/v/adaiasmagdiel/fullcrawl.svg)](https://packagist.org/packages/adaiasmagdiel/fullcrawl)
+[![Total Downloads](https://img.shields.io/packagist/dt/adaiasmagdiel/fullcrawl.svg)](https://packagist.org/packages/adaiasmagdiel/fullcrawl)
+[![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+
 **FullCrawl** is a high-performance, framework-agnostic database migration system for PHP. It follows a "Zero Configuration" philosophy by inheriting your project's existing `PDO` connection, ensuring atomic operations through native database transactions.
 
 ## Why FullCrawl?
