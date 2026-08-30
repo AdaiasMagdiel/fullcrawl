@@ -7,7 +7,7 @@
 Most migration systems force you to re-configure database credentials or bind you to a specific framework's ORM. **FullCrawl** breaks this cycle:
 
 * **Zero-Config:** It uses the connection you already established.
-* **Atomic Operations:** Every migration batch is wrapped in a transaction. If one fails, they all roll back.
+* **Atomic Operations:** Each migration runs inside its own transaction — if it fails, that migration's changes roll back and the batch stops, leaving previously applied migrations in that run committed.
 * **Framework Agnostic:** Use it with [Rubik](https://github.com/AdaiasMagdiel/Rubik-ORM), Slim, Lumen, WordPress, or your own custom-built engine.
 * **True Injection:** No global states. The `$pdo` instance is injected directly into your migration closures.
 
@@ -18,7 +18,7 @@ Most migration systems force you to re-configure database credentials or bind yo
 ### 1. Installation
 
 ```bash
-composer require AdaiasMagdiel/FullCrawl
+composer require adaiasmagdiel/fullcrawl
 
 ```
 
@@ -53,6 +53,7 @@ FullCrawl provides a powerful CLI to manage your database schema:
 | `--rollback` | Reverts the last successful batch of migrations. |
 | `--status` | Displays a detailed list of applied and pending migrations. |
 | `--fresh` | **Destructive**: Drops all tables and re-runs all migrations. |
+| `--wipe` | **Destructive**: Drops all tables without re-running migrations. |
 
 ### Anatomy of a Migration
 
@@ -74,6 +75,29 @@ return [
     },
     'down' => function(PDO $pdo) {
         $pdo->exec("DROP TABLE users");
+    }
+];
+
+```
+
+Prefer idempotent statements, so a migration can be safely re-run after a failure:
+
+```php
+<?php
+
+/**
+ * FullCrawl Migration: create_users_table
+ */
+return [
+    'up' => function(PDO $pdo) {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(50) NOT NULL,
+            email VARCHAR(255) NOT NULL UNIQUE
+        ) ENGINE=InnoDB");
+    },
+    'down' => function(PDO $pdo) {
+        $pdo->exec("DROP TABLE IF EXISTS users");
     }
 ];
 
