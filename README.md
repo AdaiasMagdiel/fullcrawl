@@ -136,26 +136,18 @@ return [
 
 ---
 
-## Continuous Integration
+## What the `fullcrawl` Script Actually Does
 
-Every push and pull request to `main` runs the test suite via [GitHub Actions](.github/workflows/tests.yml), so a change can't reach `main` without the existing behavior still checked. The badge at the top of this README always reflects the latest run on `main`.
+[`bin/fullcrawl`](bin/fullcrawl) is a plain PHP script installed by Composer as an executable — there's no compiled binary or hidden network call. Here's exactly what it does, in order, every time you run it:
 
-What the workflow does, step by step:
+1. **Finds Composer's autoloader.** It checks `vendor/autoload.php` in your current directory first, falling back to the package's own `vendor/autoload.php` if you're running it from somewhere else. If neither exists, nothing loads and PHP will error on the next step.
+2. **Loads `fullcrawl.php` from your project root.** This is your own file — the script just does `require`. If it's missing, it exits with an error before touching anything else.
+3. **Validates the return value is a `PDO` instance.** If `fullcrawl.php` returns anything else, it exits immediately. This is the only "trust" boundary: the script never opens a database connection itself, it only ever uses the one *you* constructed and handed it.
+4. **Instantiates `MigrationManager`** with that `$pdo` and `<cwd>/database/migrations`, which on construction runs one `CREATE TABLE IF NOT EXISTS` for its own history table — no other schema changes happen yet.
+5. **Dispatches on `$argv[1]`** (`--new`, `--run`, `--rollback`, `--status`, `--fresh`, `--wipe`) to the matching `MigrationManager` method. `--fresh` and `--wipe` are the only ones that touch existing data, and `--fresh` prompts for a `y/n` confirmation on stdin before doing anything.
+6. **Runs your migration files**, which are also just PHP files under `database/migrations/` that you wrote — the script `require`s each one and calls its `up`/`down` closure with the same `$pdo`.
 
-1. **Trigger:** runs on `push` and `pull_request` events targeting the `main` branch.
-2. **Matrix:** runs the whole job twice in parallel, once per PHP version in `["8.3", "8.4"]` — `pestphp/pest ^4.3` (a dev dependency, not something FullCrawl itself requires) needs PHP 8.3+, so that's the range CI can actually exercise; `fail-fast: false` means one PHP version failing doesn't cancel the other.
-3. **Checkout:** pulls the repository at the triggering commit (`actions/checkout`).
-4. **Setup PHP:** installs the matrix's PHP version with the `pdo` and `pdo_sqlite` extensions enabled (`shivammathur/setup-php`) — `pdo_sqlite` is what lets the test suite use an in-memory SQLite database instead of a real server.
-5. **Install dependencies:** runs `composer install`, resolving the exact versions pinned in `composer.lock`.
-6. **Run tests:** runs `./vendor/bin/pest`, the same command used locally; the job fails if any test fails.
-
-You can run the identical checks locally before pushing:
-
-```bash
-composer install
-./vendor/bin/pest
-
-```
+In short: the script never reaches out to the network, never opens a connection on its own, and every SQL statement that runs comes from either its own fixed history-table DDL or a migration file that lives in your repo and that you can read before running.
 
 ---
 
