@@ -70,7 +70,7 @@ FullCrawl provides a powerful CLI to manage your database schema:
 | `--run` | Executes all pending migrations within a new batch. |
 | `--rollback` | Reverts the last successful batch of migrations. |
 | `--redo "file"` | Reverts and re-runs a single migration, picking up edits made to it after it was applied. |
-| `--status` | Displays a detailed list of applied and pending migrations. |
+| `--status` | Displays a detailed list of applied and pending migrations, flagging any applied file whose content has changed since it ran. |
 | `--fresh` | **Destructive**: Drops all tables and re-runs all migrations. |
 | `--wipe` | **Destructive**: Drops all tables without re-running migrations. |
 

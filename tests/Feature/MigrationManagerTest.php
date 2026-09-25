@@ -267,3 +267,54 @@ test('it prints the status of migrations', function () {
 
     expect($output)->toContain('Applied');
 });
+
+### --- HASH / DRIFT DETECTION TESTS --- ###
+
+test('it flags a migration as modified when its file changes after being applied', function () {
+    $file = $this->manager->create('users_table');
+    file_put_contents($this->migrationsDir . '/' . $file, "<?php return [
+        'up' => fn(\$pdo) => \$pdo->exec('CREATE TABLE users (id INTEGER PRIMARY KEY)'),
+        'down' => fn(\$pdo) => \$pdo->exec('DROP TABLE users')
+    ];");
+    $this->manager->run();
+
+    $hash = $this->pdo->query("SELECT hash FROM migrations_history WHERE migration = '$file'")->fetchColumn();
+    expect($hash)->not->toBeEmpty();
+
+    ob_start();
+    $this->manager->status();
+    $output = ob_get_clean();
+    expect($output)->not->toContain('modified since applied');
+
+    // Edit the file after it was applied
+    file_put_contents($this->migrationsDir . '/' . $file, "<?php return [
+        'up' => fn(\$pdo) => \$pdo->exec('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)'),
+        'down' => fn(\$pdo) => \$pdo->exec('DROP TABLE users')
+    ];");
+
+    ob_start();
+    $this->manager->status();
+    $output = ob_get_clean();
+    expect($output)->toContain('modified since applied');
+});
+
+test('it clears the modified flag once a migration is redone', function () {
+    $file = $this->manager->create('users_table');
+    file_put_contents($this->migrationsDir . '/' . $file, "<?php return [
+        'up' => fn(\$pdo) => \$pdo->exec('CREATE TABLE users (id INTEGER PRIMARY KEY)'),
+        'down' => fn(\$pdo) => \$pdo->exec('DROP TABLE users')
+    ];");
+    $this->manager->run();
+
+    file_put_contents($this->migrationsDir . '/' . $file, "<?php return [
+        'up' => fn(\$pdo) => \$pdo->exec('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)'),
+        'down' => fn(\$pdo) => \$pdo->exec('DROP TABLE users')
+    ];");
+
+    $this->manager->redo($file);
+
+    ob_start();
+    $this->manager->status();
+    $output = ob_get_clean();
+    expect($output)->not->toContain('modified since applied');
+});

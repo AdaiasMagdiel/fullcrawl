@@ -27,6 +27,35 @@ class MigrationManager
         $driver = (string) $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
         $sql = DatabaseQueries::getCreateTableSql($driver, $this->table);
         $this->pdo->exec($sql);
+        $this->ensureHashColumn($driver);
+    }
+
+    /**
+     * Installs prior to this feature won't have the `hash` column, and
+     * CREATE TABLE IF NOT EXISTS is a no-op on an already-existing table.
+     */
+    private function ensureHashColumn(string $driver): void
+    {
+        if ($driver === 'sqlite') {
+            $stmt = $this->pdo->query("PRAGMA table_info({$this->table})");
+            $columns = $stmt ? $stmt->fetchAll(PDO::FETCH_COLUMN, 1) : [];
+            $hasHash = in_array('hash', $columns, true);
+        } else {
+            $stmt = $this->pdo->prepare(
+                "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = 'hash'"
+            );
+            $stmt->execute([$this->table]);
+            $hasHash = (bool) $stmt->fetchColumn();
+        }
+
+        if (!$hasHash) {
+            $this->pdo->exec("ALTER TABLE {$this->table} ADD COLUMN hash VARCHAR(64)");
+        }
+    }
+
+    private function hashFile(string $path): string
+    {
+        return (string) hash_file('sha256', $path);
     }
 
     public function create(string $name): string
@@ -82,8 +111,8 @@ class MigrationManager
                 $migration['up']($this->pdo);
 
                 // 2. Record in history
-                $stmtInsert = $this->pdo->prepare("INSERT INTO {$this->table} (migration, batch) VALUES (?, ?)");
-                $stmtInsert->execute([$name, $batch]);
+                $stmtInsert = $this->pdo->prepare("INSERT INTO {$this->table} (migration, batch, hash) VALUES (?, ?, ?)");
+                $stmtInsert->execute([$name, $batch, $this->hashFile($file)]);
 
                 if ($this->pdo->inTransaction()) {
                     $this->pdo->commit();
@@ -218,8 +247,8 @@ class MigrationManager
 
             $migration['up']($this->pdo);
 
-            $stmtInsert = $this->pdo->prepare("INSERT INTO {$this->table} (migration, batch) VALUES (?, ?)");
-            $stmtInsert->execute([$name, (int) $batch]);
+            $stmtInsert = $this->pdo->prepare("INSERT INTO {$this->table} (migration, batch, hash) VALUES (?, ?, ?)");
+            $stmtInsert->execute([$name, (int) $batch, $this->hashFile($path)]);
 
             if ($this->pdo->inTransaction()) {
                 $this->pdo->commit();
@@ -243,10 +272,10 @@ class MigrationManager
     {
         $this->ensureHistoryTable();
 
-        $stmt = $this->pdo->query("SELECT migration, batch, executed_at FROM {$this->table} ORDER BY id ASC");
+        $stmt = $this->pdo->query("SELECT migration, batch, executed_at, hash FROM {$this->table} ORDER BY id ASC");
         if (!$stmt) throw new RuntimeException("Failed to fetch status.");
 
-        /** @var array<array{migration: string, batch: int, executed_at: string}> $executed */
+        /** @var array<array{migration: string, batch: int, executed_at: string, hash: ?string}> $executed */
         $executed = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $files = glob($this->migrationsDir . '/*.php');
@@ -268,7 +297,15 @@ class MigrationManager
                 }
             }
 
-            $status = $info ? "Applied (Batch {$info['batch']})" : "Pending";
+            if (!$info) {
+                $status = "Pending";
+            } else {
+                $status = "Applied (Batch {$info['batch']})";
+                if ($info['hash'] && $info['hash'] !== $this->hashFile($file)) {
+                    $status .= " ⚠ modified since applied";
+                }
+            }
+
             echo sprintf("%-40s | %-10s\n", $name, $status);
         }
     }
