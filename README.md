@@ -69,6 +69,7 @@ FullCrawl provides a powerful CLI to manage your database schema:
 | `--new "name"` | Generates a new migration stub with a timestamped filename. |
 | `--run` | Executes all pending migrations within a new batch. |
 | `--rollback` | Reverts the last successful batch of migrations. |
+| `--redo "file"` | Reverts and re-runs a single migration, picking up edits made to it after it was applied. |
 | `--status` | Displays a detailed list of applied and pending migrations. |
 | `--fresh` | **Destructive**: Drops all tables and re-runs all migrations. |
 | `--wipe` | **Destructive**: Drops all tables without re-running migrations. |
@@ -121,7 +122,7 @@ return [
 2. **Loads `fullcrawl.php` from your project root.** This is your own file — the script just does `require`. If it's missing, it exits with an error before touching anything else.
 3. **Validates the return value is a `PDO` instance.** If `fullcrawl.php` returns anything else, it exits immediately. This is the only "trust" boundary: the script never opens a database connection itself, it only ever uses the one *you* constructed and handed it.
 4. **Instantiates `MigrationManager`** with that `$pdo` and `<cwd>/database/migrations`, which on construction runs one `CREATE TABLE IF NOT EXISTS` for its own history table — no other schema changes happen yet.
-5. **Dispatches on `$argv[1]`** (`--new`, `--run`, `--rollback`, `--status`, `--fresh`, `--wipe`) to the matching `MigrationManager` method. `--fresh` and `--wipe` are the only ones that touch existing data, and `--fresh` prompts for a `y/n` confirmation on stdin before doing anything.
+5. **Dispatches on `$argv[1]`** (`--new`, `--run`, `--rollback`, `--redo`, `--status`, `--fresh`, `--wipe`) to the matching `MigrationManager` method. `--fresh` and `--wipe` are the only ones that touch existing data, and `--fresh` prompts for a `y/n` confirmation on stdin before doing anything.
 6. **Runs your migration files**, which are also just PHP files under `database/migrations/` that you wrote — the script `require`s each one and calls its `up`/`down` closure with the same `$pdo`.
 
 In short: the script never reaches out to the network, never opens a connection on its own, and every SQL statement that runs comes from either its own fixed history-table DDL or a migration file that lives in your repo and that you can read before running.

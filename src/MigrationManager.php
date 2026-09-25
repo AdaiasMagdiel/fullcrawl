@@ -168,6 +168,77 @@ class MigrationManager
         return true;
     }
 
+    public function redo(string $name): bool
+    {
+        $this->ensureHistoryTable();
+
+        $path = $this->migrationsDir . DIRECTORY_SEPARATOR . $name;
+        if (!file_exists($path)) {
+            echo "❌ Migration file not found: $name\n";
+            return false;
+        }
+
+        $stmt = $this->pdo->prepare("SELECT batch FROM {$this->table} WHERE migration = ?");
+        $stmt->execute([$name]);
+        $batch = $stmt->fetchColumn();
+        $stmt->closeCursor();
+
+        if ($batch === false) {
+            echo "❌ Migration not applied yet: $name\n";
+            return false;
+        }
+
+        $migration = require $path;
+
+        try {
+            $this->pdo->beginTransaction();
+
+            $migration['down']($this->pdo);
+
+            $stmtDel = $this->pdo->prepare("DELETE FROM {$this->table} WHERE migration = ?");
+            $stmtDel->execute([$name]);
+
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->commit();
+            }
+
+            echo "↩ Reverted: $name\n";
+        } catch (Throwable $e) {
+            $rolledBack = false;
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+                $rolledBack = true;
+            }
+            $this->printError("Error reverting $name", $e->getMessage(), $rolledBack);
+            return false;
+        }
+
+        try {
+            $this->pdo->beginTransaction();
+
+            $migration['up']($this->pdo);
+
+            $stmtInsert = $this->pdo->prepare("INSERT INTO {$this->table} (migration, batch) VALUES (?, ?)");
+            $stmtInsert->execute([$name, (int) $batch]);
+
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->commit();
+            }
+
+            echo "✔ Applied: $name\n";
+        } catch (Throwable $e) {
+            $rolledBack = false;
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+                $rolledBack = true;
+            }
+            $this->printError("Error in $name", $e->getMessage(), $rolledBack);
+            return false;
+        }
+
+        return true;
+    }
+
     public function status(): void
     {
         $this->ensureHistoryTable();

@@ -141,6 +141,48 @@ test('it reports failure when a rollback fails', function () {
     expect($this->manager->rollback())->toBeFalse();
 });
 
+### --- REDO TESTS --- ###
+
+test('it reverts and reapplies a migration, picking up file edits', function () {
+    $file = $this->manager->create('users_table');
+    file_put_contents($this->migrationsDir . '/' . $file, "<?php return [
+        'up' => fn(\$pdo) => \$pdo->exec('CREATE TABLE users (id INTEGER PRIMARY KEY)'),
+        'down' => fn(\$pdo) => \$pdo->exec('DROP TABLE users')
+    ];");
+    $this->manager->run();
+
+    // Simulate editing the migration file after it was applied
+    file_put_contents($this->migrationsDir . '/' . $file, "<?php return [
+        'up' => fn(\$pdo) => \$pdo->exec('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)'),
+        'down' => fn(\$pdo) => \$pdo->exec('DROP TABLE users')
+    ];");
+
+    expect($this->manager->redo($file))->toBeTrue();
+
+    $columns = $this->pdo->query("PRAGMA table_info(users)")->fetchAll(PDO::FETCH_ASSOC);
+    $columnNames = array_column($columns, 'name');
+    expect($columnNames)->toContain('email');
+
+    // Batch is preserved and the history still has a single row for this migration
+    $rows = $this->pdo->query("SELECT batch FROM migrations_history WHERE migration = '$file'")->fetchAll();
+    expect($rows)->toHaveCount(1);
+    expect((int) $rows[0]['batch'])->toBe(1);
+});
+
+test('it refuses to redo a migration that was never applied', function () {
+    $file = $this->manager->create('never_run');
+    file_put_contents($this->migrationsDir . '/' . $file, "<?php return [
+        'up' => fn(\$pdo) => \$pdo->exec('CREATE TABLE t1 (id INT)'),
+        'down' => fn(\$pdo) => \$pdo->exec('DROP TABLE t1')
+    ];");
+
+    expect($this->manager->redo($file))->toBeFalse();
+});
+
+test('it refuses to redo a missing migration file', function () {
+    expect($this->manager->redo('20260101_000000_ghost.php'))->toBeFalse();
+});
+
 ### --- CLEANUP TESTS (WIPE) --- ###
 
 test('it wipes all tables from database', function () {

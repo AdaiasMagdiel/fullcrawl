@@ -50,6 +50,14 @@ switch ($command) {
     case '--rollback':
         if (!$manager->rollback()) exit(1);
         break;
+    case '--redo':
+        $name = $argv[2] ?? null;
+        if (!$name) {
+            echo "❌ Error: Please provide a migration name. Usage: fullcrawl --redo <migration_file>\n";
+            exit(1);
+        }
+        if (!$manager->redo($name)) exit(1);
+        break;
     case '--status':
         $manager->status();
         break;
@@ -76,6 +84,7 @@ function showHelp()
     echo "  --new [name]   Create a new migration file\n";
     echo "  --run          Run all pending migrations\n";
     echo "  --rollback     Revert the last batch of migrations\n";
+    echo "  --redo [name]  Revert and re-run a single migration (edits included)\n";
     echo "  --status       Show the status of all migrations\n";
     echo "  --fresh        Drop all tables and re-run all migrations\n";
     echo "  --wipe         Drop all tables without re-running\n";
